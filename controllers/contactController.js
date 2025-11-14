@@ -15,7 +15,7 @@ const getContactLinks = (req, res) => {
     console.warn('Variables de contact non définies dans .env');
     return res.status(500).json({
       // CORRECTION ICI: Guillemets simples remplacés par des backticks
-      message: `Liens de contact non configurés par l'administrateur.`,
+      message: `Liens de contact non configurés par l'administrateur.`, 
     });
   }
 
