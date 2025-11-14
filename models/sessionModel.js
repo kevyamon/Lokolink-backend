@@ -2,7 +2,7 @@
 
 const mongoose = require('mongoose');
 
-// C'est la structure d'un Parrain/Marraine DANS une session
+// Sous-schéma pour les parrains (inchangé)
 const sponsorSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -15,28 +15,43 @@ const sponsorSchema = new mongoose.Schema({
   assignedCount: {
     type: Number,
     required: true,
-    default: 0, // Le compteur démarre à 0
+    default: 0,
   },
 });
 
-// C'est la structure de la Session principale
+// Schéma principal de la Session
 const sessionSchema = new mongoose.Schema(
   {
     sessionName: {
       type: String,
       required: [true, 'Veuillez ajouter un nom de session'],
       trim: true,
-      unique: true, // Garantit qu'on ne peut pas avoir deux sessions avec le même nom
+      unique: true,
     },
     isActive: {
       type: Boolean,
-      default: true, // Une session est active dès sa création
+      default: true,
     },
-    sponsors: [sponsorSchema], // Un tableau d'objets suivant le schéma 'sponsorSchema'
+    sponsors: [sponsorSchema],
+
+    // --- AJOUTS DE LA MISE À NIVEAU ---
+
+    // PHASE 3: Le "Code LOKO" secret pour les filleuls
+    sessionCode: {
+      type: String,
+      required: [true, 'Veuillez définir un Code LOKO pour cette session'],
+      trim: true,
+    },
+    // PHASE 2: Le lien vers le créateur (Délégué/Admin)
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      ref: 'User', // Référence à notre 'userModel'
+    },
   },
   {
-    timestamps: true, // Ajoute createdAt et updatedAt
+    timestamps: true,
   }
 );
 
-module.exports = mongoose.model('Session', sessionSchema);  
+module.exports = mongoose.model('Session', sessionSchema);

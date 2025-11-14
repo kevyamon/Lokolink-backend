@@ -4,25 +4,31 @@ const express = require('express');
 const router = express.Router();
 const {
   createSession,
+  deleteSession,
   getActiveSessions,
   getSessionDetails,
-  deleteSession, // AJOUT
 } = require('../controllers/sessionController');
 
-// Route pour créer une session
-// POST /api/sessions/create
-router.post('/create', createSession);
+// Importer notre "garde" JWT
+const { protect } = require('../middleware/authMiddleware');
 
-// Route pour lister les sessions actives pour les filleuls
+// --- Routes Protégées (Délégué/Admin) ---
+
+// POST /api/sessions/create
+// 'protect' s'exécute en premier. S'il passe, il appelle 'createSession'.
+router.post('/create', protect, createSession);
+
+// DELETE /api/sessions/:id
+router.delete('/:id', protect, deleteSession);
+
+
+// --- Routes Publiques (Filleul) ---
+
 // GET /api/sessions/active
 router.get('/active', getActiveSessions);
 
-// Route pour les détails d'une session
 // GET /api/sessions/:id
 router.get('/:id', getSessionDetails);
 
-// Route pour supprimer (désactiver) une session
-// DELETE /api/sessions/:id
-router.delete('/:id', deleteSession); // AJOUT
 
 module.exports = router;
