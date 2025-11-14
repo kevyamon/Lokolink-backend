@@ -120,7 +120,8 @@ const loginUser = async (req, res) => {
     }
 
     // 2. Vérifier le mot de passe avec bcrypt
-    const isMatch = await user.matchPassword(enteredPassword);
+    // CORRECTION ICI : On utilise 'password' qui vient du req.body, et non 'enteredPassword'
+    const isMatch = await user.matchPassword(password);
 
     if (!isMatch) {
       return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
