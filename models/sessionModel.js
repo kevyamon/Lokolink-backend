@@ -36,13 +36,20 @@ const sessionSchema = new mongoose.Schema(
 
     // --- AJOUTS DE LA MISE À NIVEAU ---
 
-    // PHASE 3: Le "Code LOKO" secret pour les filleuls
+    // Le "Code LOKO" secret pour les filleuls
     sessionCode: {
       type: String,
       required: [true, 'Veuillez définir un Code LOKO pour cette session'],
       trim: true,
     },
-    // PHASE 2: Le lien vers le créateur (Délégué/Admin)
+    
+    // NOUVEAU : Estimation pour l'algorithme de Binôme
+    expectedGodchildCount: {
+      type: Number,
+      default: 0, // Si 0, on considère que c'est égal au nombre de parrains (ratio 1:1)
+    },
+
+    // Le lien vers le créateur (Délégué/Admin)
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       required: true,

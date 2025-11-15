@@ -9,7 +9,8 @@ const User = require('../models/userModel');
  * @access Délégué/Admin
  */
 const createSession = async (req, res) => {
-  const { sessionName, sponsorsList, sessionCode } = req.body;
+  // Ajout de expectedGodchildCount dans la destructuration
+  const { sessionName, sponsorsList, sessionCode, expectedGodchildCount } = req.body;
 
   if (!sessionName || !sponsorsList || !sessionCode) {
     return res
@@ -45,9 +46,14 @@ const createSession = async (req, res) => {
       });
     }
 
+    // Si l'utilisateur n'a pas mis d'estimation, on part du principe 
+    // qu'il y a autant de filleuls que de parrains (Pas de binôme forcé).
+    const finalExpectedCount = expectedGodchildCount ? parseInt(expectedGodchildCount) : sponsorsArray.length;
+
     const newSession = await Session.create({
       sessionName: sessionName,
       sessionCode: sessionCode,
+      expectedGodchildCount: finalExpectedCount, // On sauvegarde l'info
       sponsors: sponsorsArray,
       isActive: true,
       createdBy: req.user._id,
