@@ -3,6 +3,11 @@
 const User = require('../models/userModel');
 const RegistrationCode = require('../models/registrationCodeModel');
 const generateToken = require('../utils/generateToken');
+const { Mutex } = require('async-mutex'); // 1. Import du Mutex
+
+// 2. Création d'un verrou global pour les inscriptions
+// Ce verrou empêche deux inscriptions simultanées d'utiliser le même code "au vol"
+const registrationMutex = new Mutex();
 
 /**
  * @desc   Inscrire un utilisateur (Délégué ou SuperAdmin) avec un code
@@ -12,56 +17,59 @@ const generateToken = require('../utils/generateToken');
 const registerUser = async (req, res) => {
   const { email, password, registrationCode } = req.body;
 
-  try {
-    // 1. Vérifier si le code d'inscription est valide
-    const codeDoc = await RegistrationCode.findOne({ code: registrationCode });
+  // 3. ON ACTIVE LE VERROU : Une seule inscription passe ici à la fois
+  await registrationMutex.runExclusive(async () => {
+    try {
+      // A. Vérifier si le code d'inscription est valide (Existe-t-il ?)
+      const codeDoc = await RegistrationCode.findOne({ code: registrationCode });
 
-    if (!codeDoc) {
-      return res.status(400).json({ message: "Code d'inscription invalide." });
-    }
+      if (!codeDoc) {
+        return res.status(400).json({ message: "Code d'inscription invalide." });
+      }
 
-    // 2. Vérifier si le code a déjà été utilisé
-    if (codeDoc.isUsed) {
-      return res.status(400).json({ message: 'Ce code a déjà été utilisé.' });
-    }
+      // B. Vérifier si le code a déjà été utilisé (Le cœur de la faille corrigée)
+      if (codeDoc.isUsed) {
+        return res.status(400).json({ message: 'Ce code a déjà été utilisé.' });
+      }
 
-    // 3. Vérifier si l'email est déjà pris
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res.status(400).json({ message: 'Cet email est déjà utilisé.' });
-    }
+      // C. Vérifier si l'email est déjà pris
+      const userExists = await User.findOne({ email });
+      if (userExists) {
+        return res.status(400).json({ message: 'Cet email est déjà utilisé.' });
+      }
 
-    // 4. Définir la date d'expiration (9 mois)
-    const expirationDate = new Date();
-    expirationDate.setMonth(expirationDate.getMonth() + 9);
+      // D. Définir la date d'expiration (9 mois)
+      const expirationDate = new Date();
+      expirationDate.setMonth(expirationDate.getMonth() + 9);
 
-    // 5. Créer l'utilisateur
-    const user = await User.create({
-      email,
-      password,
-      role: codeDoc.role, // Le rôle est défini par le code
-      accountExpiresAt: expirationDate, // Compte à rebours de 9 mois
-    });
-
-    // 6. "Brûler" le code d'inscription
-    codeDoc.isUsed = true;
-    await codeDoc.save();
-
-    // 7. Connecter l'utilisateur et renvoyer le token
-    if (user) {
-      res.status(201).json({
-        _id: user._id,
-        email: user.email,
-        role: user.role,
-        token: generateToken(user._id, user.role),
+      // E. Créer l'utilisateur
+      const user = await User.create({
+        email,
+        password,
+        role: codeDoc.role, // Le rôle est défini par le code
+        accountExpiresAt: expirationDate, // Compte à rebours de 9 mois
       });
-    } else {
-      res.status(400).json({ message: 'Données utilisateur invalides.' });
+
+      // F. "Brûler" le code d'inscription (Irréversible)
+      codeDoc.isUsed = true;
+      await codeDoc.save();
+
+      // G. Connecter l'utilisateur et renvoyer le token
+      if (user) {
+        res.status(201).json({
+          _id: user._id,
+          email: user.email,
+          role: user.role,
+          token: generateToken(user._id, user.role),
+        });
+      } else {
+        res.status(400).json({ message: 'Données utilisateur invalides.' });
+      }
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Erreur serveur.' });
     }
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Erreur serveur.' });
-  }
+  }); // Fin du bloc Mutex
 };
 
 /**
@@ -120,7 +128,6 @@ const loginUser = async (req, res) => {
     }
 
     // 2. Vérifier le mot de passe avec bcrypt
-    // CORRECTION ICI : On utilise 'password' qui vient du req.body, et non 'enteredPassword'
     const isMatch = await user.matchPassword(password);
 
     if (!isMatch) {
@@ -156,7 +163,6 @@ const loginUser = async (req, res) => {
 };
 
 
-// On exporte les nouvelles fonctions
 module.exports = {
   registerUser,
   registerEternalAdmin,
