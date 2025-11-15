@@ -2,40 +2,37 @@
 
 const Session = require('../models/sessionModel');
 const Pairing = require('../models/pairingModel');
-const User = require('../models/userModel'); // NOUVEAU
-const RegistrationCode = require('../models/registrationCodeModel'); // NOUVEAU
-const crypto = require('crypto'); // Natif de Node.js, pour générer des codes
+const User = require('../models/userModel');
+const RegistrationCode = require('../models/registrationCodeModel');
+const crypto = require('crypto');
 
-// --- GESTION DES CODES D'INSCRIPTION (PLAN P5) ---
+// --- GESTION DES CODES D'INSCRIPTION ---
 
 /**
  * @desc   [Admin] Générer un nouveau code d'invitation
  * @route  POST /api/admin/generate-code
- * @access Admin (SuperAdmin ou Eternal)
+ * @access Admin
  */
 const generateRegistrationCode = async (req, res) => {
-  const { role } = req.body; // 'delegue' ou 'superadmin'
+  const { role } = req.body;
 
   if (!role || (role !== 'delegue' && role !== 'superadmin')) {
     return res.status(400).json({ message: "Veuillez spécifier un rôle valide ('delegue' ou 'superadmin')." });
   }
 
   try {
-    // 1. Générer un code unique (ex: LOKO-DEL-ABC123)
     const randomBytes = crypto.randomBytes(4).toString('hex').toUpperCase();
     const codeString = `LOKO-${role.toUpperCase().substring(0, 3)}-${randomBytes}`;
 
-    // 2. Créer et sauvegarder le code
     const newCode = await RegistrationCode.create({
       code: codeString,
       role: role,
-      createdBy: req.user._id, // req.user vient de notre "garde" (middleware)
+      createdBy: req.user._id,
     });
 
     res.status(201).json({ message: 'Code généré avec succès.', code: newCode });
 
   } catch (error) {
-    // Si le code généré existe déjà (très rare), on gère
     if (error.code === 11000) {
       return res.status(400).json({ message: 'Erreur lors de la génération du code, veuillez réessayer.' });
     }
@@ -47,7 +44,7 @@ const generateRegistrationCode = async (req, res) => {
 /**
  * @desc   [Admin] Voir tous les codes d'invitation
  * @route  GET /api/admin/codes
- * @access Admin (SuperAdmin ou Eternal)
+ * @access Admin
  */
 const getAllCodes = async (req, res) => {
   try {
@@ -59,9 +56,9 @@ const getAllCodes = async (req, res) => {
 };
 
 /**
- * @desc   [Admin] Supprimer un code d'invitation (s'il n'est pas utilisé)
+ * @desc   [Admin] Supprimer un code d'invitation
  * @route  DELETE /api/admin/codes/:id
- * @access Admin (SuperAdmin ou Eternal)
+ * @access Admin
  */
 const deleteCode = async (req, res) => {
   try {
@@ -74,23 +71,23 @@ const deleteCode = async (req, res) => {
       return res.status(400).json({ message: 'Impossible de supprimer un code déjà utilisé.' });
     }
 
-    await code.deleteOne(); // Nouvelle méthode Mongoose
+    await code.deleteOne();
     res.status(200).json({ message: 'Code supprimé avec succès.' });
   } catch (error) {
     res.status(500).json({ message: 'Erreur serveur.' });
   }
 };
 
-// --- GESTION DES UTILISATEURS (PLAN P5) ---
+// --- GESTION DES UTILISATEURS ---
 
 /**
  * @desc   [Admin] Voir tous les utilisateurs
  * @route  GET /api/admin/users
- * @access Admin (SuperAdmin ou Eternal)
+ * @access Admin
  */
 const getAllUsers = async (req, res) => {
   try {
-    const users = await User.find({}).select('-password'); // Ne jamais renvoyer les mots de passe
+    const users = await User.find({}).select('-password');
     res.status(200).json(users);
   } catch (error) {
     res.status(500).json({ message: 'Erreur serveur.' });
@@ -98,7 +95,7 @@ const getAllUsers = async (req, res) => {
 };
 
 
-// --- GESTION DES SESSIONS (Code existant, légèrement modifié) ---
+// --- GESTION DES SESSIONS ---
 
 /**
  * @desc   [Admin] Récupérer TOUTES les sessions
@@ -120,7 +117,6 @@ const getAllSessionsAdmin = async (req, res) => {
  * @access Admin
  */
 const deleteSessionAdmin = async (req, res) => {
-  // (Pas de double authentification pour l'Admin, il a le pouvoir)
   try {
     const session = await Session.findById(req.params.id);
     if (!session) {
@@ -135,12 +131,37 @@ const deleteSessionAdmin = async (req, res) => {
 };
 
 /**
+ * @desc   [Admin] Activer/Désactiver une session (Toggle)
+ * @route  PATCH /api/admin/sessions/:id/toggle-status
+ * @access Admin
+ */
+const toggleSessionStatus = async (req, res) => {
+  try {
+    const session = await Session.findById(req.params.id);
+    if (!session) {
+      return res.status(404).json({ message: 'Session non trouvée.' });
+    }
+
+    // Bascule l'état
+    session.isActive = !session.isActive;
+    await session.save();
+
+    res.status(200).json({ 
+      message: `Session ${session.isActive ? 'activée' : 'désactivée'}.`, 
+      session 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Erreur serveur lors du changement de statut.' });
+  }
+};
+
+/**
  * @desc   [Admin] Mettre à jour les infos d'un parrain
  * @route  PUT /api/admin/sessions/:sessionId/sponsors/:sponsorId
  * @access Admin
  */
 const updateSponsorInfo = async (req, res) => {
-  // (Logique inchangée)
   const { sessionId, sponsorId } = req.params;
   const { name, phone } = req.body;
   if (!name || !phone) {
@@ -165,17 +186,13 @@ const updateSponsorInfo = async (req, res) => {
   }
 };
 
-// Exporter TOUTES les fonctions
 module.exports = {
-  // NOUVEAU
   generateRegistrationCode,
   getAllCodes,
   deleteCode,
   getAllUsers,
-  // ANCIEN (mis à jour)
   getAllSessionsAdmin,
   deleteSessionAdmin,
   updateSponsorInfo,
-  // On doit supprimer getSessionDetailsAdmin car on ne l'a pas défini,
-  // mais la logique est déjà dans 'openEditModal' du frontend qui appelle /api/admin/sessions/:id
+  toggleSessionStatus, // NOUVEAU
 };
