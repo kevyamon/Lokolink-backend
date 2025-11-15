@@ -4,24 +4,23 @@ const express = require('express');
 const router = express.Router();
 const {
   createSession,
+  getMySessions, // <--- AJOUTÉ
   getMySession,
   deleteSession,
   getActiveSessions,
   getSessionDetails,
   joinSession,
-  verifySessionPassword, // <--- Import
+  verifySessionPassword,
 } = require('../controllers/sessionController');
 
 const { protect } = require('../middleware/authMiddleware');
 
 // --- Routes Protégées (Délégué/Admin) ---
 router.post('/create', protect, createSession);
+router.get('/my-sessions', protect, getMySessions); // <--- NOUVELLE ROUTE
 router.get('/my-session/:id', protect, getMySession);
 router.delete('/:id', protect, deleteSession);
-
-// NOUVEAU : Vérification mot de passe pour accès dashboard
 router.post('/verify-password', protect, verifySessionPassword);
-
 
 // --- Routes Publiques ---
 router.get('/active', getActiveSessions);
