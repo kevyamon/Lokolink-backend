@@ -9,7 +9,6 @@ const User = require('../models/userModel');
  * @access Délégué/Admin
  */
 const createSession = async (req, res) => {
-  // Ajout de expectedGodchildCount dans la destructuration
   const { sessionName, sponsorsList, sessionCode, expectedGodchildCount } = req.body;
 
   if (!sessionName || !sponsorsList || !sessionCode) {
@@ -40,27 +39,21 @@ const createSession = async (req, res) => {
       })
       .filter((sponsor) => sponsor !== null);
 
-    if (sponsorsArray.length === 0) {
-      return res.status(400).json({
-        message: 'La liste fournie ne contient aucun parrain valide.',
-      });
-    }
-
-    // Si l'utilisateur n'a pas mis d'estimation, on part du principe 
-    // qu'il y a autant de filleuls que de parrains (Pas de binôme forcé).
     const finalExpectedCount = expectedGodchildCount ? parseInt(expectedGodchildCount) : sponsorsArray.length;
 
     const newSession = await Session.create({
       sessionName: sessionName,
       sessionCode: sessionCode,
-      expectedGodchildCount: finalExpectedCount, // On sauvegarde l'info
+      expectedGodchildCount: finalExpectedCount,
       sponsors: sponsorsArray,
       isActive: true,
       createdBy: req.user._id,
     });
 
-    // SOCKET: Informer tout le monde qu'une nouvelle session est là
-    req.io.emit('session:created', newSession);
+    // SOCKET
+    if (req.io) {
+        req.io.emit('session:created', newSession);
+    }
 
     res.status(201).json({
       message: 'Session créée avec succès!',
@@ -75,7 +68,32 @@ const createSession = async (req, res) => {
 };
 
 /**
- * @desc   Supprimer (désactiver) une session (Côté Délégué)
+ * @desc   Récupérer les détails complets d'une session (POUR LE DÉLÉGUÉ CRÉATEUR)
+ * @route  GET /api/sessions/my-session/:id
+ * @access Délégué (Protégé)
+ */
+const getMySession = async (req, res) => {
+  try {
+    const session = await Session.findById(req.params.id);
+
+    if (!session) {
+      return res.status(404).json({ message: 'Session introuvable.' });
+    }
+
+    // Vérification de sécurité : seul le créateur ou un admin peut voir ça
+    if (session.createdBy.toString() !== req.user._id.toString() && req.user.role !== 'superadmin' && req.user.role !== 'eternal') {
+      return res.status(401).json({ message: 'Non autorisé. Vous n\'êtes pas le créateur de cette session.' });
+    }
+
+    res.json(session);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+};
+
+/**
+ * @desc   Supprimer (désactiver) une session
  * @route  DELETE /api/sessions/:id
  * @access Délégué/Admin
  */
@@ -112,8 +130,7 @@ const deleteSession = async (req, res) => {
     session.isActive = false;
     await session.save();
 
-    // SOCKET: Informer que cette session a été modifiée (désactivée)
-    req.io.emit('session:updated', session);
+    if (req.io) req.io.emit('session:updated', session);
 
     res.status(200).json({
       message: `La session "${session.sessionName}" a été désactivée.`,
@@ -153,9 +170,67 @@ const getSessionDetails = async (req, res) => {
   }
 };
 
+/**
+ * @desc   Un parrain rejoint une session via le Code LOKO (Auto-inscription)
+ * @route  POST /api/sessions/join
+ * @access Public
+ */
+const joinSession = async (req, res) => {
+  const { sessionCode, name, phone } = req.body;
+
+  if (!sessionCode || !name || !phone) {
+    return res.status(400).json({ message: 'Code, Nom et Téléphone requis.' });
+  }
+
+  try {
+    const session = await Session.findOne({ sessionCode: sessionCode.trim() });
+
+    if (!session) {
+      return res.status(404).json({ message: 'Code LOKO invalide ou session introuvable.' });
+    }
+
+    if (!session.isActive) {
+      return res.status(400).json({ message: 'Cette session est fermée.' });
+    }
+
+    const sponsorExists = session.sponsors.find(
+      (s) => s.phone.replace(/\s/g, '') === phone.replace(/\s/g, '')
+    );
+
+    if (sponsorExists) {
+      return res.status(400).json({ message: 'Ce numéro est déjà inscrit dans cette session.' });
+    }
+
+    const newSponsor = {
+      name: name.trim(),
+      phone: phone.trim(),
+      assignedCount: 0,
+    };
+
+    session.sponsors.push(newSponsor);
+    await session.save();
+
+    if (req.io) req.io.emit('session:updated', session);
+
+    res.status(200).json({
+      message: 'Inscription validée !',
+      sessionName: session.sessionName,
+      sponsor: newSponsor
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Erreur serveur lors de l\'inscription.' });
+  }
+};
+
+// === C'EST ICI QUE L'ERREUR SE TROUVAIT PROBABLEMENT ===
+// Assurez-vous que TOUTES les fonctions sont bien dans cet objet :
 module.exports = {
   createSession,
+  getMySession,      // <--- Vérifiez que cette ligne est bien là
   deleteSession,
   getActiveSessions,
   getSessionDetails,
+  joinSession,       // <--- Et celle-ci aussi
 };
