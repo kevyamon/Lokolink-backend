@@ -55,9 +55,9 @@ const deleteCode = async (req, res) => {
     if (!code) {
       return res.status(404).json({ message: 'Code non trouvé.' });
     }
-    if (code.isUsed) {
-      return res.status(400).json({ message: 'Impossible de supprimer un code utilisé.' });
-    }
+    
+    // MODIFICATION : On autorise la suppression même si utilisé (pour nettoyage)
+    // L'ancienne restriction a été retirée ici.
 
     await code.deleteOne();
     
