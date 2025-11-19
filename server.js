@@ -10,7 +10,7 @@ const connectDB = require('./config/db');
 // --- MODULES DE SÉCURITÉ ---
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
-const xss = require('xss-clean');
+// RETRAIT DE XSS-CLEAN (Cause probable du crash 500)
 const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
 
@@ -31,19 +31,17 @@ const app = express();
 const server = http.createServer(app);
 
 // =================================================================
-// 1. CONFIGURATION CORS (EN PREMIER !!!)
+// 1. CONFIGURATION CORS
 // =================================================================
 
-// Normalisation : on enlève les slashs de fin potentiels pour la comparaison
 const normalizeUrl = (url) => url ? url.trim().replace(/\/$/, '') : '';
 
 const allowedOrigins = [
   'http://localhost:5173', 
   'http://localhost:3000',
-  'https://lokolink.onrender.com', // Ton Frontend
+  'https://lokolink.onrender.com', 
 ].map(normalizeUrl);
 
-// Ajout des URLs depuis l'environnement
 if (process.env.FRONTEND_URL) {
   const envOrigins = process.env.FRONTEND_URL.split(',').map(normalizeUrl);
   allowedOrigins.push(...envOrigins);
@@ -53,11 +51,8 @@ console.log('CORS Allowed Origins:', allowedOrigins);
 
 const corsOptions = {
     origin: function (origin, callback) {
-        // Autoriser les requêtes sans 'origin' (ex: Postman, App mobile, server-to-server)
         if (!origin) return callback(null, true);
-
         const normalizedOrigin = normalizeUrl(origin);
-
         if (allowedOrigins.includes(normalizedOrigin)) {
             callback(null, true);
         } else {
@@ -71,37 +66,32 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 
-// Appliquer CORS immédiatement
-// Cela gère automatiquement les requêtes OPTIONS (Preflight)
 app.use(cors(corsOptions));
 
 // =================================================================
-// 2. AUTRES MESURES DE SÉCURITÉ (APRÈS CORS)
+// 2. SÉCURITÉ & MIDDLEWARES
 // =================================================================
 
-// Helmet : Sécurise les en-têtes HTTP
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
-// Rate Limiting : Anti-Brute Force
 const limiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 10 minutes
+  windowMs: 10 * 60 * 1000, 
   max: 150,
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'Trop de requêtes, veuillez patienter.'
+  message: 'Trop de requêtes.'
 });
 app.use(limiter);
 
-// Assainissement des données (Anti-Injection)
 app.use(express.json({ limit: '10kb' })); 
-app.use(mongoSanitize());
-app.use(xss());
-app.use(hpp());
+app.use(mongoSanitize()); // Protection NoSQL
+// app.use(xss()); <--- SUPPRIMÉ
+app.use(hpp()); // Protection pollution paramètres
 
 // =================================================================
-// 3. SOCKET.IO & ROUTES
+// 3. SOCKET.IO
 // =================================================================
 
 const io = new Server(server, {
@@ -124,9 +114,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// Routes API
+// =================================================================
+// 4. ROUTES
+// =================================================================
+
 app.get('/', (req, res) => {
-    res.send('API LokoLink is running & secured.');
+    res.status(200).send('API LokoLink is running & secured.');
 });
 
 app.use('/api/auth', authRoutes);
@@ -134,6 +127,18 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/pairings', pairingRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
+
+// =================================================================
+// 5. GESTIONNAIRE D'ERREURS GLOBAL (LE MOUCHARD)
+// =================================================================
+// Si une erreur survient n'importe où, elle tombe ici et est logguée
+app.use((err, req, res, next) => {
+  console.error("🔥 ERREUR SERVEUR DETECTÉE :", err.stack);
+  res.status(500).json({ 
+    message: 'Erreur interne du serveur', 
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Une erreur est survenue'
+  });
+});
 
 const PORT = process.env.PORT || 5000;
 
