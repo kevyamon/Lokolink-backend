@@ -31,11 +31,12 @@ const app = express();
 const server = http.createServer(app);
 
 // --- 1. SÉCURITÉ : EN-TÊTES HTTP (HELMET) ---
-// Place des en-têtes sécurisés pour prévenir diverses attaques (XSS, Clickjacking, etc.)
-app.use(helmet());
+// On configure Helmet pour autoriser les ressources cross-origin (nécessaire pour le chargement d'images ou API externes)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
-// --- 2. SÉCURITÉ : RATE LIMITING (ANTI-BRUTE FORCE) ---
-// Limite chaque IP à 150 requêtes par fenêtre de 10 minutes
+// --- 2. SÉCURITÉ : RATE LIMITING ---
 const limiter = rateLimit({
   windowMs: 10 * 60 * 1000, 
   max: 150,
@@ -46,41 +47,52 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // MIDDLEWARES D'EXPRESS
-app.use(express.json({ limit: '10kb' })); // Limite la taille du body pour éviter les attaques DoS
+app.use(express.json({ limit: '10kb' })); 
 
-// --- 3. SÉCURITÉ : ASSAINISSEMENT DES DONNÉES ---
-// Empêche l'injection NoSQL (ex: email: {"$gt": ""})
+// --- 3. SÉCURITÉ : ASSAINISSEMENT ---
 app.use(mongoSanitize());
-
-// Empêche les attaques XSS (Cross-Site Scripting) dans les inputs
 app.use(xss());
-
-// Empêche la pollution des paramètres HTTP
 app.use(hpp());
 
-// --- CONFIGURATION CORS (STRICTE) ---
-const allowedOrigins = process.env.FRONTEND_URL 
-    ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-    : ['http://localhost:5173', 'http://localhost:3000'];
+// --- 4. CONFIGURATION CORS (LA CORRECTION EST ICI) ---
+
+// On définit la liste blanche.
+// IMPORTANT : Assure-toi que 'https://lokolink.onrender.com' est bien dans tes variables d'environnement FRONTEND_URL sur Render,
+// OU ajoute-le en dur ici pour être sûr à 100% pendant le debug.
+const allowedOrigins = [
+  'http://localhost:5173', 
+  'http://localhost:3000',
+  'https://lokolink.onrender.com', // Ton Frontend
+  // Ajoute ici d'autres domaines si nécessaire
+];
+
+// Si une variable d'env existe, on l'ajoute à la liste
+if (process.env.FRONTEND_URL) {
+  const envOrigins = process.env.FRONTEND_URL.split(',').map(url => url.trim());
+  allowedOrigins.push(...envOrigins);
+}
 
 const corsOptions = {
     origin: function (origin, callback) {
+        // Autoriser les requêtes sans 'origin' (ex: Postman, App mobile, server-to-server)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.includes(origin)) {
+
+        if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
             console.error(`CORS BLOCKED: Origin ${origin} is not in allowed list.`);
             callback(new Error('Not allowed by CORS'));
         }
     },
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Options ajouté pour le preflight
     credentials: true,
-    optionsSuccessStatus: 204
+    allowedHeaders: ['Content-Type', 'Authorization'], // Explicitement autorisé
+    optionsSuccessStatus: 200 // Pour supporter les vieux navigateurs/proxies
 };
 
 app.use(cors(corsOptions));
 
-// CONFIGURATION SOCKET.IO
+// CONFIGURATION SOCKET.IO (Doit aussi accepter le CORS)
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -89,13 +101,11 @@ const io = new Server(server, {
   },
 });
 
-// PASSAGE DE L'INSTANCE IO AUX REQUÊTES
 app.use((req, res, next) => {
     req.io = io; 
     next();
 });
 
-// Événement de connexion Socket.io
 io.on('connection', (socket) => {
   console.log('A client connected:', socket.id);
   socket.on('disconnect', () => {
