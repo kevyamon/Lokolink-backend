@@ -9,8 +9,8 @@ const connectDB = require('./config/db');
 
 // --- MODULES DE SÉCURITÉ ---
 const helmet = require('helmet');
-const mongoSanitize = require('express-mongo-sanitize');
-// RETRAIT DE XSS-CLEAN (Cause probable du crash 500)
+// const mongoSanitize = ... (SUPPRIMÉ CAR INCOMPATIBLE EXPRESS 5)
+const xss = require('xss-clean');
 const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
 
@@ -86,8 +86,30 @@ const limiter = rateLimit({
 app.use(limiter);
 
 app.use(express.json({ limit: '10kb' })); 
-app.use(mongoSanitize()); // Protection NoSQL
-// app.use(xss()); <--- SUPPRIMÉ
+
+// --- REMPLACEMENT DU MONGO-SANITIZE PAR NOTRE VERSION COMPATIBLE EXPRESS 5 ---
+// Fonction récursive de nettoyage
+const cleanObject = (obj) => {
+  if (obj && typeof obj === 'object') {
+    for (const key in obj) {
+      if (key.startsWith('$') || key.includes('.')) {
+        delete obj[key]; // On supprime la clé dangereuse
+      } else {
+        cleanObject(obj[key]); // On descend dans l'objet
+      }
+    }
+  }
+};
+
+// Middleware appliqué
+app.use((req, res, next) => {
+  if (req.body) cleanObject(req.body);
+  if (req.query) cleanObject(req.query);
+  if (req.params) cleanObject(req.params);
+  next();
+});
+// -----------------------------------------------------------------------------
+
 app.use(hpp()); // Protection pollution paramètres
 
 // =================================================================
@@ -129,14 +151,14 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
 
 // =================================================================
-// 5. GESTIONNAIRE D'ERREURS GLOBAL (LE MOUCHARD)
+// 5. GESTIONNAIRE D'ERREURS GLOBAL
 // =================================================================
-// Si une erreur survient n'importe où, elle tombe ici et est logguée
 app.use((err, req, res, next) => {
   console.error("🔥 ERREUR SERVEUR DETECTÉE :", err.stack);
+  // On évite d'envoyer l'erreur brute au client en prod
   res.status(500).json({ 
     message: 'Erreur interne du serveur', 
-    error: process.env.NODE_ENV === 'development' ? err.message : 'Une erreur est survenue'
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Une erreur technique est survenue.'
   });
 });
 
