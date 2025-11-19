@@ -30,69 +30,84 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-// --- 1. SÉCURITÉ : EN-TÊTES HTTP (HELMET) ---
-// On configure Helmet pour autoriser les ressources cross-origin (nécessaire pour le chargement d'images ou API externes)
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
-}));
+// =================================================================
+// 1. CONFIGURATION CORS (EN PREMIER !!!)
+// =================================================================
 
-// --- 2. SÉCURITÉ : RATE LIMITING ---
-const limiter = rateLimit({
-  windowMs: 10 * 60 * 1000, 
-  max: 150,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Trop de requêtes depuis cette IP, veuillez réessayer plus tard.'
-});
-app.use(limiter);
+// Normalisation : on enlève les slashs de fin potentiels pour la comparaison
+const normalizeUrl = (url) => url ? url.trim().replace(/\/$/, '') : '';
 
-// MIDDLEWARES D'EXPRESS
-app.use(express.json({ limit: '10kb' })); 
-
-// --- 3. SÉCURITÉ : ASSAINISSEMENT ---
-app.use(mongoSanitize());
-app.use(xss());
-app.use(hpp());
-
-// --- 4. CONFIGURATION CORS (LA CORRECTION EST ICI) ---
-
-// On définit la liste blanche.
-// IMPORTANT : Assure-toi que 'https://lokolink.onrender.com' est bien dans tes variables d'environnement FRONTEND_URL sur Render,
-// OU ajoute-le en dur ici pour être sûr à 100% pendant le debug.
 const allowedOrigins = [
   'http://localhost:5173', 
   'http://localhost:3000',
   'https://lokolink.onrender.com', // Ton Frontend
-  // Ajoute ici d'autres domaines si nécessaire
-];
+].map(normalizeUrl);
 
-// Si une variable d'env existe, on l'ajoute à la liste
+// Ajout des URLs depuis l'environnement
 if (process.env.FRONTEND_URL) {
-  const envOrigins = process.env.FRONTEND_URL.split(',').map(url => url.trim());
+  const envOrigins = process.env.FRONTEND_URL.split(',').map(normalizeUrl);
   allowedOrigins.push(...envOrigins);
 }
+
+console.log('CORS Allowed Origins:', allowedOrigins); // Log pour débugger sur Render si besoin
 
 const corsOptions = {
     origin: function (origin, callback) {
         // Autoriser les requêtes sans 'origin' (ex: Postman, App mobile, server-to-server)
         if (!origin) return callback(null, true);
 
-        if (allowedOrigins.indexOf(origin) !== -1) {
+        const normalizedOrigin = normalizeUrl(origin);
+
+        if (allowedOrigins.includes(normalizedOrigin)) {
             callback(null, true);
         } else {
-            console.error(`CORS BLOCKED: Origin ${origin} is not in allowed list.`);
+            console.error(`BLOCKED BY CORS: ${origin}`);
             callback(new Error('Not allowed by CORS'));
         }
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Options ajouté pour le preflight
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization'], // Explicitement autorisé
-    optionsSuccessStatus: 200 // Pour supporter les vieux navigateurs/proxies
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+    optionsSuccessStatus: 200
 };
 
+// Appliquer CORS immédiatement
 app.use(cors(corsOptions));
+// Gérer explicitement les requêtes OPTIONS (Preflight) pour toutes les routes
+app.options('*', cors(corsOptions));
 
-// CONFIGURATION SOCKET.IO (Doit aussi accepter le CORS)
+// =================================================================
+// 2. AUTRES MESURES DE SÉCURITÉ (APRÈS CORS)
+// =================================================================
+
+// Helmet : Sécurise les en-têtes HTTP
+// On doit autoriser le chargement de ressources externes (images, scripts)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  // Si besoin de désactiver temporairement CSP pour tester :
+  // contentSecurityPolicy: false, 
+}));
+
+// Rate Limiting : Anti-Brute Force
+const limiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 150,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Trop de requêtes, veuillez patienter.'
+});
+app.use(limiter);
+
+// Assainissement des données (Anti-Injection)
+app.use(express.json({ limit: '10kb' })); 
+app.use(mongoSanitize());
+app.use(xss());
+app.use(hpp());
+
+// =================================================================
+// 3. SOCKET.IO & ROUTES
+// =================================================================
+
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -107,15 +122,15 @@ app.use((req, res, next) => {
 });
 
 io.on('connection', (socket) => {
-  console.log('A client connected:', socket.id);
+  console.log('Socket connected:', socket.id);
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+    console.log('Socket disconnected:', socket.id);
   });
 });
 
-// ROUTES
+// Routes API
 app.get('/', (req, res) => {
-    res.send('API is running secured...');
+    res.send('API LokoLink is running & secured.');
 });
 
 app.use('/api/auth', authRoutes);
