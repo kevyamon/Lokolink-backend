@@ -3,58 +3,55 @@
 const User = require('../models/userModel');
 const RegistrationCode = require('../models/registrationCodeModel');
 const generateToken = require('../utils/generateToken');
-const { Mutex } = require('async-mutex'); // 1. Import du Mutex
+const { Mutex } = require('async-mutex'); 
 
-// 2. Création d'un verrou global pour les inscriptions
-// Ce verrou empêche deux inscriptions simultanées d'utiliser le même code "au vol"
 const registrationMutex = new Mutex();
+
+// Regex pour mot de passe fort : Min 6 char, 1 majuscule, 1 chiffre
+const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d@$!%*#?&]{6,}$/;
 
 /**
  * @desc   Inscrire un utilisateur (Délégué ou SuperAdmin) avec un code
  * @route  POST /api/auth/register
- * @access Public
  */
 const registerUser = async (req, res) => {
   const { email, password, registrationCode } = req.body;
 
-  // 3. ON ACTIVE LE VERROU : Une seule inscription passe ici à la fois
+  // Validation Force Mot de Passe
+  if (!password || !passwordRegex.test(password)) {
+      return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caractères, dont une lettre et un chiffre.' });
+  }
+
   await registrationMutex.runExclusive(async () => {
     try {
-      // A. Vérifier si le code d'inscription est valide (Existe-t-il ?)
       const codeDoc = await RegistrationCode.findOne({ code: registrationCode });
 
       if (!codeDoc) {
         return res.status(400).json({ message: "Code d'inscription invalide." });
       }
 
-      // B. Vérifier si le code a déjà été utilisé (Le cœur de la faille corrigée)
       if (codeDoc.isUsed) {
         return res.status(400).json({ message: 'Ce code a déjà été utilisé.' });
       }
 
-      // C. Vérifier si l'email est déjà pris
       const userExists = await User.findOne({ email });
       if (userExists) {
         return res.status(400).json({ message: 'Cet email est déjà utilisé.' });
       }
 
-      // D. Définir la date d'expiration (9 mois)
       const expirationDate = new Date();
       expirationDate.setMonth(expirationDate.getMonth() + 9);
 
-      // E. Créer l'utilisateur
       const user = await User.create({
         email,
         password,
-        role: codeDoc.role, // Le rôle est défini par le code
-        accountExpiresAt: expirationDate, // Compte à rebours de 9 mois
+        role: codeDoc.role, 
+        accountExpiresAt: expirationDate, 
       });
 
-      // F. "Brûler" le code d'inscription (Irréversible)
       codeDoc.isUsed = true;
       await codeDoc.save();
 
-      // G. Connecter l'utilisateur et renvoyer le token
       if (user) {
         res.status(201).json({
           _id: user._id,
@@ -69,34 +66,33 @@ const registerUser = async (req, res) => {
       console.error(error);
       res.status(500).json({ message: 'Erreur serveur.' });
     }
-  }); // Fin du bloc Mutex
+  }); 
 };
 
 /**
  * @desc   Inscrire le tout premier admin "Eternal"
  * @route  POST /api/auth/register-eternal
- * @access Public (mais protégé par la clé .env)
  */
 const registerEternalAdmin = async (req, res) => {
   const { email, password, eternalKey } = req.body;
 
-  // 1. Vérifier la "Clé Maîtresse"
   if (eternalKey !== process.env.ETERNAL_ADMIN_KEY) {
     return res.status(401).json({ message: 'Clé Maîtresse incorrecte.' });
   }
 
-  // 2. Vérifier si l'email est déjà pris
+  if (!password || !passwordRegex.test(password)) {
+    return res.status(400).json({ message: 'Le mot de passe est trop faible.' });
+  }
+
   const userExists = await User.findOne({ email });
   if (userExists) {
     return res.status(400).json({ message: 'Cet email est déjà utilisé.' });
   }
 
-  // 3. Créer l'utilisateur "Eternal"
   const user = await User.create({
     email,
     password,
     role: 'eternal',
-    // Pas de 'accountExpiresAt' pour le rôle eternal
   });
 
   if (user) {
@@ -114,37 +110,34 @@ const registerEternalAdmin = async (req, res) => {
 /**
  * @desc   Connecter un utilisateur (Login)
  * @route  POST /api/auth/login
- * @access Public
  */
 const loginUser = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // 1. Trouver l'utilisateur par email
     const user = await User.findOne({ email });
 
+    // Protection contre l'énumération d'utilisateurs : message générique
     if (!user) {
+      // Petit délai pour simuler un temps de calcul
+      await new Promise(resolve => setTimeout(resolve, 200)); 
       return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
     }
 
-    // 2. Vérifier le mot de passe avec bcrypt
     const isMatch = await user.matchPassword(password);
 
     if (!isMatch) {
       return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
     }
 
-    // 3. Vérifier si le compte est actif et non expiré
     if (!user.isActive) {
       return res.status(401).json({ message: 'Ce compte a été désactivé.' });
     }
     
-    // Si ce n'est PAS un 'eternal', on vérifie la date
     if (user.role !== 'eternal' && user.accountExpiresAt && user.accountExpiresAt < new Date()) {
        return res.status(401).json({ message: 'Ce compte a expiré. Veuillez contacter un administrateur.' });
     }
 
-    // 4. Tout est bon : renvoyer le token JWT
     res.status(200).json({
       _id: user._id,
       email: user.email,
@@ -153,7 +146,6 @@ const loginUser = async (req, res) => {
     });
 
   } catch (error) {
-     // Gérer l'erreur si le mot de passe est vide ou mal formaté par bcrypt
      if (error.name === 'TypeError' && error.message.includes('data and hash arguments required')) {
         return res.status(401).json({ message: 'Email ou mot de passe incorrect.' });
      }
@@ -161,7 +153,6 @@ const loginUser = async (req, res) => {
      res.status(500).json({ message: 'Erreur serveur.' });
   }
 };
-
 
 module.exports = {
   registerUser,

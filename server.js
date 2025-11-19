@@ -3,9 +3,16 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
-const http = require('http'); // Module natif Node.js requis pour Socket.io
-const { Server } = require('socket.io'); // Import Socket.io
+const http = require('http'); 
+const { Server } = require('socket.io'); 
 const connectDB = require('./config/db');
+
+// --- MODULES DE SÉCURITÉ ---
+const helmet = require('helmet');
+const mongoSanitize = require('express-mongo-sanitize');
+const xss = require('xss-clean');
+const rateLimit = require('express-rate-limit');
+const hpp = require('hpp');
 
 // Importer les routes
 const authRoutes = require('./routes/authRoutes');
@@ -13,8 +20,6 @@ const sessionRoutes = require('./routes/sessionRoutes');
 const pairingRoutes = require('./routes/pairingRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const contactRoutes = require('./routes/contactRoutes');
-
-// --- RETIRÉ : const { notFound, errorHandler } = require('./middleware/errorMiddleware'); ---
 
 // Charger les variables d'environnement
 dotenv.config();
@@ -25,23 +30,42 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
+// --- 1. SÉCURITÉ : EN-TÊTES HTTP (HELMET) ---
+// Place des en-têtes sécurisés pour prévenir diverses attaques (XSS, Clickjacking, etc.)
+app.use(helmet());
+
+// --- 2. SÉCURITÉ : RATE LIMITING (ANTI-BRUTE FORCE) ---
+// Limite chaque IP à 150 requêtes par fenêtre de 10 minutes
+const limiter = rateLimit({
+  windowMs: 10 * 60 * 1000, 
+  max: 150,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Trop de requêtes depuis cette IP, veuillez réessayer plus tard.'
+});
+app.use(limiter);
+
 // MIDDLEWARES D'EXPRESS
-app.use(express.json()); // Permet d'accepter les données JSON dans le corps des requêtes
+app.use(express.json({ limit: '10kb' })); // Limite la taille du body pour éviter les attaques DoS
 
-// --- DÉBUT DE LA LOGIQUE CORS MULTI-DOMAINES (Le but de la manip) ---
+// --- 3. SÉCURITÉ : ASSAINISSEMENT DES DONNÉES ---
+// Empêche l'injection NoSQL (ex: email: {"$gt": ""})
+app.use(mongoSanitize());
 
-// 1. On parse la variable d'environnement FRONTEND_URL.
+// Empêche les attaques XSS (Cross-Site Scripting) dans les inputs
+app.use(xss());
+
+// Empêche la pollution des paramètres HTTP
+app.use(hpp());
+
+// --- CONFIGURATION CORS (STRICTE) ---
 const allowedOrigins = process.env.FRONTEND_URL 
     ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
     : ['http://localhost:5173', 'http://localhost:3000'];
 
-// 2. Configuration CORS pour Express
 const corsOptions = {
     origin: function (origin, callback) {
-        // Permettre les requêtes sans 'origin' (ex: Postman, curl, applications mobiles)
         if (!origin) return callback(null, true);
-
-        // Vérifie si l'origine fait partie de la liste autorisée
         if (allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
@@ -56,7 +80,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// 3. CONFIGURATION SOCKET.IO
+// CONFIGURATION SOCKET.IO
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -67,23 +91,21 @@ const io = new Server(server, {
 
 // PASSAGE DE L'INSTANCE IO AUX REQUÊTES
 app.use((req, res, next) => {
-    req.io = io; // On attache l'instance de Socket.io à la requête
+    req.io = io; 
     next();
 });
 
 // Événement de connexion Socket.io
 io.on('connection', (socket) => {
   console.log('A client connected:', socket.id);
-  
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
 });
 
-
 // ROUTES
 app.get('/', (req, res) => {
-    res.send('API is running...');
+    res.send('API is running secured...');
 });
 
 app.use('/api/auth', authRoutes);
@@ -92,15 +114,10 @@ app.use('/api/pairings', pairingRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
 
-// --- RETIRÉ : app.use(notFound); ---
-// --- RETIRÉ : app.use(errorHandler); ---
-
-
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`));
 
-// Gère les promesses non traitées
 process.on('unhandledRejection', (err, promise) => {
     console.log(`Error: ${err.message}`);
     server.close(() => process.exit(1));

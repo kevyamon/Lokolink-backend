@@ -15,7 +15,11 @@ const createSession = async (req, res) => {
   }
 
   try {
-    const sessionExists = await Session.findOne({ sessionName });
+    // Nettoyage strict des inputs
+    const cleanSessionName = sessionName.trim();
+    const cleanSessionCode = sessionCode.trim();
+
+    const sessionExists = await Session.findOne({ sessionName: cleanSessionName });
     if (sessionExists) return res.status(400).json({ message: 'Nom déjà utilisé.' });
 
     let sponsorsArray = [];
@@ -30,8 +34,8 @@ const createSession = async (req, res) => {
     const finalExpectedCount = expectedGodchildCount ? parseInt(expectedGodchildCount) : 0;
 
     const newSession = await Session.create({
-      sessionName: sessionName,
-      sessionCode: sessionCode,
+      sessionName: cleanSessionName,
+      sessionCode: cleanSessionCode,
       expectedGodchildCount: finalExpectedCount,
       sponsors: sponsorsArray,
       isActive: true,
@@ -54,8 +58,6 @@ const createSession = async (req, res) => {
  */
 const getMySessions = async (req, res) => {
   try {
-    // On cherche toutes les sessions créées par cet utilisateur
-    // On trie par date de création (la plus récente en haut)
     const sessions = await Session.find({ createdBy: req.user._id }).sort({ createdAt: -1 });
     res.json(sessions);
   } catch (error) {
@@ -83,13 +85,13 @@ const getMySession = async (req, res) => {
 };
 
 /**
- * @desc   Désactiver une session (Soft Delete pour Admin, "Suppression" pour Délégué)
+ * @desc   Désactiver une session (Soft Delete)
  * @route  DELETE /api/sessions/:id
+ * @access Protected (Délégué avec MDP ou Admin)
  */
 const deleteSession = async (req, res) => {
-  // Note : Le délégué n'a plus besoin de mot de passe ici s'il est déjà connecté sur son dashboard
-  // Mais gardons la vérification si le mot de passe est envoyé
   const sessionID = req.params.id;
+  const { password } = req.body; // Le mot de passe est envoyé dans le body
 
   try {
     const session = await Session.findById(sessionID);
@@ -100,9 +102,31 @@ const deleteSession = async (req, res) => {
 
     if (!isOwner && !isAdmin) return res.status(401).json({ message: 'Non autorisé.' });
 
-    // Désactivation (Soft Delete)
-    // Pour le SuperAdmin, c'est une désactivation.
-    // Pour le délégué, visuellement ce sera comme une suppression (filtré plus tard ou marqué "Terminé")
+    // --- CORRECTION CRITIQUE DE SÉCURITÉ ---
+    // Si c'est le propriétaire (Délégué), on DOIT vérifier le mot de passe
+    if (isOwner && !isAdmin) {
+        if (!password) {
+            return res.status(400).json({ message: 'Mot de passe requis pour confirmer.' });
+        }
+
+        // On doit récupérer l'utilisateur AVEC son mot de passe (le middleware 'protect' l'a exclu)
+        const userWithPassword = await User.findById(req.user._id).select('+password');
+        
+        if (!userWithPassword) {
+            return res.status(404).json({ message: 'Utilisateur introuvable.' });
+        }
+
+        // Vérification cryptographique
+        const isMatch = await userWithPassword.matchPassword(password);
+        
+        if (!isMatch) {
+             // Ajout d'un délai artificiel pour prévenir les attaques par timing
+             await new Promise(resolve => setTimeout(resolve, 500));
+             return res.status(401).json({ message: 'Mot de passe incorrect. Action refusée.' });
+        }
+    }
+    // ---------------------------------------
+
     session.isActive = false;
     await session.save();
 
@@ -110,11 +134,10 @@ const deleteSession = async (req, res) => {
 
     res.status(200).json({ message: `Session désactivée.` });
   } catch (error) {
+    console.error("Delete Error:", error);
     res.status(500).json({ message: 'Erreur serveur.' });
   }
 };
-
-// ... (Le reste des fonctions publiques ne change pas) ...
 
 const getActiveSessions = async (req, res) => {
   try {
@@ -149,23 +172,33 @@ const joinSession = async (req, res) => {
 };
 
 const verifySessionPassword = async (req, res) => {
-  // Gardons cette fonction au cas où, même si on passe par le login principal maintenant
   const { password, sessionId } = req.body;
   if (!password || !sessionId) return res.status(400).json({ message: 'Données manquantes.' });
   try {
     const session = await Session.findById(sessionId);
     if (!session) return res.status(404).json({ message: 'Introuvable.' });
-    if (session.createdBy.toString() !== req.user._id.toString() && req.user.role !== 'superadmin' && req.user.role !== 'eternal') return res.status(403).json({ message: 'Interdit.' });
+    
+    // Seul le créateur ou l'admin peut accéder au dashboard
+    if (session.createdBy.toString() !== req.user._id.toString() && req.user.role !== 'superadmin' && req.user.role !== 'eternal') {
+         return res.status(403).json({ message: 'Interdit.' });
+    }
+
+    // Récupération explicite du mot de passe utilisateur
     const user = await User.findById(req.user._id);
-    if (!(await user.matchPassword(password))) return res.status(401).json({ message: 'Mot de passe incorrect.' });
+    
+    // Vérification stricte
+    if (!(await user.matchPassword(password))) {
+        return res.status(401).json({ message: 'Mot de passe incorrect.' });
+    }
+    
     res.status(200).json({ message: 'OK' });
   } catch (error) { res.status(500).json({ message: 'Erreur.' }); }
 };
 
 module.exports = {
   createSession,
-  getMySessions, // <--- AJOUTÉ (Pluriel)
-  getMySession,  // (Singulier - détail)
+  getMySessions,
+  getMySession,
   deleteSession,
   getActiveSessions,
   getSessionDetails,
