@@ -49,7 +49,7 @@ if (process.env.FRONTEND_URL) {
   allowedOrigins.push(...envOrigins);
 }
 
-console.log('CORS Allowed Origins:', allowedOrigins); // Log pour débugger sur Render si besoin
+console.log('CORS Allowed Origins:', allowedOrigins);
 
 const corsOptions = {
     origin: function (origin, callback) {
@@ -72,20 +72,16 @@ const corsOptions = {
 };
 
 // Appliquer CORS immédiatement
+// Cela gère automatiquement les requêtes OPTIONS (Preflight)
 app.use(cors(corsOptions));
-// Gérer explicitement les requêtes OPTIONS (Preflight) pour toutes les routes
-app.options('*', cors(corsOptions));
 
 // =================================================================
 // 2. AUTRES MESURES DE SÉCURITÉ (APRÈS CORS)
 // =================================================================
 
 // Helmet : Sécurise les en-têtes HTTP
-// On doit autoriser le chargement de ressources externes (images, scripts)
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
-  // Si besoin de désactiver temporairement CSP pour tester :
-  // contentSecurityPolicy: false, 
 }));
 
 // Rate Limiting : Anti-Brute Force
